@@ -43,11 +43,6 @@ class HealthappStack(Stack):
                                    
         )
         
-        
-        # deployment = s3deploy.BucketDeployment(self, "DeployDocuments",
-        #     sources=[s3deploy.Source.asset("docs")],
-        #     destination_bucket=documentBucket
-        # )
 
         documentDatasource = bedrock.S3DataSource(self, 'KBS3DataSource',
             bucket= documentBucket,
@@ -72,12 +67,12 @@ class HealthappStack(Stack):
         )
         
         # Lambda injestion rrole
-        lambda_injestion_policy = iam.PolicyStatement(
+        lambda_ingestion_policy = iam.PolicyStatement(
                             actions=["bedrock:StartIngestionJob"],
                             resources=[kb.knowledge_base_arn],
                         )
         # Define the Injestion Lambda function
-        lambda_injestion_job = _lambda.Function(
+        lambda_ingestion_job = _lambda.Function(
             self,
             "IngestionJob",
             runtime=_lambda.Runtime.PYTHON_3_12,
@@ -89,9 +84,9 @@ class HealthappStack(Stack):
                 "DATA_SOURCE_ID": documentDatasource.data_source_id
             }
         )
-        lambda_injestion_job.add_to_role_policy(lambda_injestion_policy)
+        lambda_ingestion_job.add_to_role_policy(lambda_ingestion_policy)
         # Add the S3 Put Event Source to the Lambda
-        lambda_injestion_job.add_event_source(S3EventSource(documentBucket,
+        lambda_ingestion_job.add_event_source(S3EventSource(documentBucket,
             events=[s3.EventType.OBJECT_CREATED, s3.EventType.OBJECT_REMOVED],
         ))
         # Permission to Write Data to Tabel
@@ -113,35 +108,17 @@ class HealthappStack(Stack):
 
         self.kbQueryLambdaFunction.add_to_role_policy(policy_statement)
         
-        rest_api = apigateway.RestApi(
-            self,
-            "health-rest-api"
+        api = apigateway.LambdaRestApi(
+            self, 'KBQueryApiGW',
+            handler=self.kbQueryLambdaFunction,
+            proxy=False
         )
-        # api = apigateway.LambdaRestApi(
-        #     self, 'KBQueryApiGW',
-        #     handler=self.kbQueryLambdaFunction,
-        #     proxy=False
-        # )
 
-        kb_query = rest_api.root.add_resource('query')# api.root.add_resource('query')
-        
-        kb_query.add_method(
-            'POST',
-            apigateway.LambdaIntegration(
-                handler=self.kbQueryLambdaFunction
-            )
-            )
-
+        kb_query = api.root.add_resource('query')
+        kb_query.add_method('POST')
+    
         CfnOutput(
             self, 'ApiEndpoint',
-            value=rest_api.url,
+            value=api.url,
             description='The endpoint of the KB Query API'
         )
-
-        # The code that defines your stack goes here
-
-        # example resource
-        # queue = sqs.Queue(
-        #     self, "HealthappQueue",
-        #     visibility_timeout=Duration.seconds(300),
-        # )
