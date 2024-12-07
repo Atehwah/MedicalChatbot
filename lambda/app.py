@@ -3,16 +3,8 @@ import json
 import os
 
 def handler(event, context):
-
-    print(event)
     slots = event['sessionState']['intent']['slots']
     intent = event['sessionState']['intent']['name']
-    print(event['invocationSource'])
-    
-    print("event['sessionId']")
-    print(event['sessionId'])
-    print(slots)
-    print(intent)
     validation_result = validate(slots=slots)
     if event['invocationSource'] == 'DialogCodeHook':
         if not validation_result['isValid']:
@@ -29,10 +21,8 @@ def handler(event, context):
                 }
             }
         else:
-            print(slots['question']['value']['originalValue'])
             question = event['inputTranscript']
             res = invoke_model(question)
-            print(res)
             response = {
                     "sessionState": {
                         "dialogAction": {
@@ -51,7 +41,7 @@ def handler(event, context):
                         }
                     ]
                 }
-            # save_item(id=event['sessionId'], input=res['question'], res=res['response'])
+            save_item(id=event['sessioId'], input=res['question'], res=res['response'])
 
     if event['invocationSource'] == 'FulfillmentCodeHook':
         response = {
@@ -65,22 +55,12 @@ def handler(event, context):
                     }
                 }
             }
-        
     return response
     
 def invoke_model(input):
-    # input = event.get('body')
-    print("Question:", input)
-
-    
     client = boto3.client('bedrock-agent-runtime')
-    # client = boto3.client(service_name='bedrock-runtime', region_name='us-east-1')
     knowledgeBaseId = os.getenv("KB_ID")
     modelArn = os.getenv("KB_MODEL_ARN")
-    print(dir(client))
-    print(modelArn)
-    print(knowledgeBaseId)
-    
     resp = client.retrieve_and_generate(
         input={
             'text': input
@@ -93,16 +73,11 @@ def invoke_model(input):
             'type': 'KNOWLEDGE_BASE',
         }
     )
-    
-    
-    
     kbTextResponse = resp['output']['text']
-    print("KB response:", kbTextResponse)
     response = {
             "question": input,
             "response": kbTextResponse
     }
-    
     return response
     
 def save_item(input, res, id):
@@ -126,7 +101,6 @@ def save_item(input, res, id):
         }),
     }
     return response
-
 
 def validate(slots):
     if not slots['question']:

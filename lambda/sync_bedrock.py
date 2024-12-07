@@ -4,7 +4,7 @@ import json
 
 def handler(event, context):
     # Initialize the Bedrock Agent client
-    client = boto3.client("bedrock-agent", region_name=os.getenv["AWS_REGION"])
+    client = boto3.client("bedrock-agent-runtime")
     
     # Prepare the input parameters
     input_params = {

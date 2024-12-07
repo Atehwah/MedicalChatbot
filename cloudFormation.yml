@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  HealthTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: "heath-table"
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+      BillingMode: "PAY_PER_REQUEST"
+      DeletionPolicy: "Delete"
+
+  HealthDocumentBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      DeletionPolicy: "Delete"
+
+  HealthKnowledgeBase:
+    Type: "Custom::KnowledgeBase"
+    Properties:
+      ServiceToken: "<Insert-Service-Token-For-KnowledgeBase>"
+      EmbeddingsModel: "TITAN_EMBED_TEXT_V1"
+
+  KBS3DataSource:
+    Type: "Custom::S3DataSource"
+    Properties:
+      ServiceToken: "<Insert-Service-Token-For-S3DataSource>"
+      Bucket: !Ref HealthDocumentBucket
+      KnowledgeBase: !Ref HealthKnowledgeBase
+      DataSourceName: "documents"
+      ChunkingStrategy: "FIXED_SIZE"
+      MaxTokens: 500
+      OverlapPercentage: 20
+
+  KBQueryFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Runtime: "python3.12"
+      Handler: "app.handler"
+      Code:
+        S3Bucket: "<Insert-Lambda-Asset-Bucket>"
+        S3Key: "<Insert-Lambda-Asset-Key>"
+      Timeout: 900
+      Environment:
+        Variables:
+          KB_ID: !GetAtt HealthKnowledgeBase.Id
+          KB_MODEL_ARN: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+          TABLE_NAME: !Ref HealthTable
+      Policies:
+        - Statement:
+            Effect: "Allow"
+            Action:
+              - "bedrock:Retrieve"
+              - "bedrock:RetrieveAndGenerate"
+              - "bedrock:InvokeModel"
+            Resource:
+              - "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+              - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/${HealthKnowledgeBase.Id}"
+        - Statement:
+            Effect: "Allow"
+            Action:
+              - "dynamodb:PutItem"
+            Resource: !GetAtt HealthTable.Arn
+
+  IngestionJob:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Runtime: "python3.12"
+      Handler: "sync_bedrock.handler"
+      Code:
+        S3Bucket: "<Insert-Lambda-Asset-Bucket>"
+        S3Key: "<Insert-Lambda-Asset-Key>"
+      Timeout: 900
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !GetAtt HealthKnowledgeBase.Id
+          DATA_SOURCE_ID: !GetAtt KBS3DataSource.Id
+      Policies:
+        - Statement:
+            Effect: "Allow"
+            Action:
+              - "bedrock:StartIngestionJob"
+            Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/${HealthKnowledgeBase.Id}"
+
+  ApiGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "KBQueryApiGW"
+
+  ApiGatewayResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      PathPart: "query"
+      ParentId: !GetAtt ApiGateway.RootResourceId
+
+  ApiGatewayMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiGatewayResource
+      HttpMethod: "POST"
+      AuthorizationType: "NONE"
+      Integration:
+        Type: "AWS_PROXY"
+        IntegrationHttpMethod: "POST"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${KBQueryFunction.Arn}/invocations"
+
+Outputs:
+  ApiEndpoint:
+    Description: "The endpoint of the KB Query API"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/"
