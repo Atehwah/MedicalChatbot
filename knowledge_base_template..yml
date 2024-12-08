@@ -1,0 +1,945 @@
+Resources:
+  HealthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      TableName: medical-chat-table
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  HealthKnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+          - Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Join
+                  - ''
+                  - - 'arn:'
+                    - !Ref AWS::Partition
+                    - ':bedrock:'
+                    - !Ref AWS::Region
+                    - ':'
+                    - !Ref AWS::AccountId
+                    - ':knowledge-base/*'
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Ref HealthKnowledgeBaseKBVectorsAOSSApiAccessAll
+      RoleName: AmazonBedrockExecutionRoleForKnowledgeBaseHealthadgeBase
+
+  HealthKnowledgeBaseRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: bedrock:InvokeModel
+            Effect: Allow
+            Resource: !Join
+              - ''
+              - - 'arn:aws:bedrock:'
+                - !Ref AWS::Region
+                - '::foundation-model/amazon.titan-embed-text-v1'
+          - Action:
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+            Effect: Allow
+            Resource:
+              - !GetAtt HealthDocumentBucket.Arn
+              - !Join
+                - ''
+                - - !GetAtt HealthDocumentBucket.Arn
+                  - /*
+        Version: '2012-10-17'
+      PolicyName: HealthKnowledgeBaseRoleDefaultPolicy
+      Roles:
+        - !Ref HealthKnowledgeBaseRole
+
+  HealthKnowledgeBaseKBVectorsEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: encryptionpolicyhealtorsbeaafaae
+      Policy: '{"Rules":[{"ResourceType":"collection","Resource":["collection/vectorstorehealthectorsbeaafaae"]}],"AWSOwnedKey":true}'
+      Type: encryption
+
+  HealthKnowledgeBaseKBVectorsNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: networkpolicyhealtctorsbeaafaae
+      Policy: '[{"Rules":[{"ResourceType":"collection","Resource":["collection/vectorstorehealthectorsbeaafaae"]},{"ResourceType":"dashboard","Resource":["collection/vectorstorehealthectorsbeaafaae"]}],"AllowFromPublic":true}]'
+      Type: network
+
+  HealthKnowledgeBaseKBVectorsVectorCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: vectorstorehealthectorsbeaafaae
+      Type: VECTORSEARCH
+    DependsOn:
+      - HealthKnowledgeBaseKBVectorsEncryptionPolicy
+      - HealthKnowledgeBaseKBVectorsNetworkPolicy
+
+  HealthKnowledgeBaseKBVectorsAOSSApiAccessAll:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: ''
+      Path: /
+      PolicyDocument:
+        Statement:
+          - Action: aoss:APIAccessAll
+            Effect: Allow
+            Resource: !GetAtt HealthKnowledgeBaseKBVectorsVectorCollection.Arn
+        Version: '2012-10-17'
+
+  HealthKnowledgeBaseKBVectorsDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: dataaccesspolicyhealtorsbeaafaae
+      Policy: !Join
+        - ''
+        - - '[{"Rules":[{"Resource":["collection/vectorstorehealthectorsbeaafaae"],"Permission":["aoss:DescribeCollectionItems","aoss:CreateCollectionItems","aoss:UpdateCollectionItems"],"ResourceType":"collection"},{"Resource":["index/vectorstorehealthectorsbeaafaae/*"],"Permission":["aoss:UpdateIndex","aoss:DescribeIndex","aoss:ReadDocument","aoss:WriteDocument","aoss:CreateIndex"],"ResourceType":"index"}],"Principal":["'
+          - !GetAtt HealthKnowledgeBaseRole.Arn
+          - '"],"Description":""}]'
+      Type: data
+
+  HealthKnowledgeBaseKBIndexManageIndexPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: manageindexpolicyheadex06ce615c
+      Policy: !Join
+        - ''
+        - - '[{"Rules":[{"Resource":["index/vectorstorehealthectorsbeaafaae/*"],"Permission":["aoss:DescribeIndex","aoss:CreateIndex","aoss:DeleteIndex","aoss:UpdateIndex"],"ResourceType":"index"},{"Resource":["collection/vectorstorehealthectorsbeaafaae"],"Permission":["aoss:DescribeCollectionItems"],"ResourceType":"collection"}],"Principal":["'
+          - !GetAtt OpenSearchIndexCRProviderCRRole.Arn
+          - '"],"Description":""}]'
+      Type: data
+    DependsOn:
+      - HealthKnowledgeBaseKBVectorsAOSSApiAccessAll
+      - HealthKnowledgeBaseKBVectorsDataAccessPolicy
+      - HealthKnowledgeBaseKBVectorsEncryptionPolicy
+      - HealthKnowledgeBaseKBVectorsNetworkPolicy
+      - HealthKnowledgeBaseKBVectorsVectorCollection
+
+  HealthKnowledgeBaseKBIndexVectorIndex:
+    Type: Custom::OpenSearchIndex
+    Properties:
+      ServiceToken: !GetAtt OpenSearchIndexCRProviderframeworkonEvent.Arn
+      Endpoint: !Join
+        - ''
+        - - !GetAtt HealthKnowledgeBaseKBVectorsVectorCollection.Id
+          - .
+          - !Ref AWS::Region
+          - .aoss.amazonaws.com
+      IndexName: bedrock-knowledge-base-default-index
+      VectorField: bedrock-knowledge-base-default-vector
+      Dimensions: 1536
+      MetadataManagement:
+        - MappingField: AMAZON_BEDROCK_TEXT_CHUNK
+          DataType: text
+          Filterable: true
+        - MappingField: AMAZON_BEDROCK_METADATA
+          DataType: text
+          Filterable: false
+    DependsOn:
+      - HealthKnowledgeBaseKBIndexManageIndexPolicy
+      - HealthKnowledgeBaseKBVectorsAOSSApiAccessAll
+      - HealthKnowledgeBaseKBVectorsDataAccessPolicy
+      - HealthKnowledgeBaseKBVectorsEncryptionPolicy
+      - HealthKnowledgeBaseKBVectorsNetworkPolicy
+      - HealthKnowledgeBaseKBVectorsVectorCollection
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  HealthKnowledgeBase:
+    Type: Custom::Bedrock-KnowledgeBase
+    Properties:
+      ServiceToken: !GetAtt BedrockCRProviderframeworkonEvent.Arn
+      knowledgeBaseConfiguration:
+        type: VECTOR
+        vectorKnowledgeBaseConfiguration:
+          embeddingModelArn: !Join
+            - ''
+            - - 'arn:aws:bedrock:'
+              - !Ref AWS::Region
+              - '::foundation-model/amazon.titan-embed-text-v1'
+      roleArn: !GetAtt HealthKnowledgeBaseRole.Arn
+      name: KBHealthappStowledgeBase
+      storageConfiguration:
+        type: OPENSEARCH_SERVERLESS
+        opensearchServerlessConfiguration:
+          collectionArn: !GetAtt HealthKnowledgeBaseKBVectorsVectorCollection.Arn
+          vectorIndexName: bedrock-knowledge-base-default-index
+          fieldMapping:
+            vectorField: bedrock-knowledge-base-default-vector
+            textField: AMAZON_BEDROCK_TEXT_CHUNK
+            metadataField: AMAZON_BEDROCK_METADATA
+    DependsOn:
+      - HealthKnowledgeBaseKBCRPolicy
+      - HealthKnowledgeBaseKBIndexManageIndexPolicy
+      - HealthKnowledgeBaseKBIndexVectorIndex
+      - HealthKnowledgeBaseRoleDefaultPolicy
+      - HealthKnowledgeBaseRole
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  HealthKnowledgeBaseKBCRPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: bedrock:CreateKnowledgeBase
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - bedrock:DeleteKnowledgeBase
+              - bedrock:TagResource
+              - bedrock:UpdateKnowledgeBase
+            Effect: Allow
+            Resource: !Join
+              - ''
+              - - 'arn:'
+                - !Ref AWS::Partition
+                - ':bedrock:'
+                - !Ref AWS::Region
+                - ':'
+                - !Ref AWS::AccountId
+                - ':knowledge-base/*'
+          - Action: iam:PassRole
+            Effect: Allow
+            Resource: !GetAtt HealthKnowledgeBaseRole.Arn
+        Version: '2012-10-17'
+      PolicyName: HealthKnowledgeBaseKBCRPolicy
+      Roles:
+        - !Ref BedrockCRProviderCRRole
+
+  OpenSearchIndexCRProviderCRRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Ref HealthKnowledgeBaseKBVectorsAOSSApiAccessAll
+
+  OpenSearchIndexCRProviderCustomResourcesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: afcbb447dd78ce973e3dc968535006919f22b65b22b4595b796fea3c1cabcbe2.zip
+      Description: Custom Resource Provider
+      Handler: custom_resources.on_event
+      MemorySize: 128
+      Role: !GetAtt OpenSearchIndexCRProviderCRRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+    DependsOn:
+      - OpenSearchIndexCRProviderCRRole
+
+  OpenSearchIndexCRProviderCustomResourcesFunctionLogRetention:
+    Type: Custom::LogRetention
+    Properties:
+      ServiceToken: !GetAtt LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a.Arn
+      LogGroupName: !Join
+        - ''
+        - - /aws/lambda/
+          - !Ref OpenSearchIndexCRProviderCustomResourcesFunction
+      RetentionInDays: 7
+
+  OpenSearchIndexCRProviderProviderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  OpenSearchIndexCRProviderProviderRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: lambda:InvokeFunction
+            Effect: Allow
+            Resource:
+              - !GetAtt OpenSearchIndexCRProviderCustomResourcesFunction.Arn
+              - !Join
+                - ''
+                - - !GetAtt OpenSearchIndexCRProviderCustomResourcesFunction.Arn
+                  - ':*'
+        Version: '2012-10-17'
+      PolicyName: OpenSearchIndexCRProviderProviderRoleDefaultPolicy
+      Roles:
+        - !Ref OpenSearchIndexCRProviderProviderRole
+
+  OpenSearchIndexCRProviderframeworkonEvent:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 3542be390685e0c8353d92ccb5796d343cd93ca946b6b0de798004206a199adc.zip
+      Description: AWS CDK resource provider framework - onEvent
+        (HealthappStack/OpenSearchIndexCRProvider/Provider)
+      Environment:
+        Variables:
+          USER_ON_EVENT_FUNCTION_ARN: !GetAtt OpenSearchIndexCRProviderCustomResourcesFunction.Arn
+      Handler: framework.onEvent
+      Role: !GetAtt OpenSearchIndexCRProviderProviderRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 900
+    DependsOn:
+      - OpenSearchIndexCRProviderProviderRoleDefaultPolicy
+      - OpenSearchIndexCRProviderProviderRole
+
+  OpenSearchIndexCRProviderframeworkonEventLogRetention64E7FA2B:
+    Type: Custom::LogRetention
+    Properties:
+      ServiceToken: !GetAtt LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a.Arn
+      LogGroupName: !Join
+        - ''
+        - - /aws/lambda/
+          - !Ref OpenSearchIndexCRProviderframeworkonEvent
+      RetentionInDays: 7
+    Metadata:
+      aws:cdk:path: HealthappStack/OpenSearchIndexCRProvider/Provider/framework-onEvent/LogRetention/Resource
+  LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - logs:DeleteRetentionPolicy
+              - logs:PutRetentionPolicy
+            Effect: Allow
+            Resource: '*'
+        Version: '2012-10-17'
+      PolicyName: LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicy
+      Roles:
+        - !Ref LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole
+
+  LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Timeout: 900
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 4e26bf2d0a26f2097fb2b261f22bb51e3f6b4b52635777b1e54edbd8e2d58c35.zip
+      Role: !GetAtt LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole.Arn
+    DependsOn:
+      - LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicy
+      - LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole
+
+  BedrockCRProviderCRRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  BedrockCRProviderCustomResourcesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 920780c9c0456a8e7d0648a9905a4292333391b7a79872eb1cb0adab577eb403.zip
+      Description: Custom Resource Provider
+      Handler: custom_resources.on_event
+      MemorySize: 128
+      Role: !GetAtt BedrockCRProviderCRRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+    DependsOn:
+      - BedrockCRProviderCRRole
+
+  BedrockCRProviderCustomResourcesFunctionLogRetention:
+    Type: Custom::LogRetention
+    Properties:
+      ServiceToken: !GetAtt LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a.Arn
+      LogGroupName: !Join
+        - ''
+        - - /aws/lambda/
+          - !Ref BedrockCRProviderCustomResourcesFunction
+      RetentionInDays: 7
+
+  BedrockCRProviderProviderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  BedrockCRProviderProviderRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: lambda:InvokeFunction
+            Effect: Allow
+            Resource:
+              - !GetAtt BedrockCRProviderCustomResourcesFunction.Arn
+              - !Join
+                - ''
+                - - !GetAtt BedrockCRProviderCustomResourcesFunction.Arn
+                  - ':*'
+        Version: '2012-10-17'
+      PolicyName: BedrockCRProviderProviderRoleDefaultPolicy
+      Roles:
+        - !Ref BedrockCRProviderProviderRole
+
+  BedrockCRProviderframeworkonEvent:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 3542be390685e0c8353d92ccb5796d343cd93ca946b6b0de798004206a199adc.zip
+      Description: AWS CDK resource provider framework - onEvent
+        (HealthappStack/BedrockCRProvider/Provider)
+      Environment:
+        Variables:
+          USER_ON_EVENT_FUNCTION_ARN: !GetAtt BedrockCRProviderCustomResourcesFunction.Arn
+      Handler: framework.onEvent
+      Role: !GetAtt BedrockCRProviderProviderRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 900
+    DependsOn:
+      - BedrockCRProviderProviderRoleDefaultPolicy
+      - BedrockCRProviderProviderRole
+
+  BedrockCRProviderframeworkonEventLogRetention:
+    Type: Custom::LogRetention
+    Properties:
+      ServiceToken: !GetAtt LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a.Arn
+      LogGroupName: !Join
+        - ''
+        - - /aws/lambda/
+          - !Ref BedrockCRProviderframeworkonEvent
+      RetentionInDays: 7
+
+  HealthDocumentBucket:
+    Type: AWS::S3::Bucket
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  HealthDocumentBucketNotifications:
+    Type: Custom::S3BucketNotifications
+    Properties:
+      ServiceToken: !GetAtt BucketNotificationsHandler050a0587b7544547bf325f094a3db.Arn
+      BucketName: !Ref HealthDocumentBucket
+      NotificationConfiguration:
+        LambdaFunctionConfigurations:
+          - Events:
+              - s3:ObjectCreated:*
+            LambdaFunctionArn: !GetAtt IngestionJob.Arn
+          - Events:
+              - s3:ObjectRemoved:*
+            LambdaFunctionArn: !GetAtt IngestionJob.Arn
+      Managed: true
+    DependsOn:
+      - HealthDocumentBucketAllowBucketNotificationsToHealthappStackIngestionJob
+
+  HealthDocumentBucketAllowBucketNotificationsToHealthappStackIngestionJob:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt IngestionJob.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt HealthDocumentBucket.Arn
+
+  KBS3DataSource:
+    Type: Custom::Bedrock-DataSource
+    Properties:
+      ServiceToken: !GetAtt BedrockCRProviderframeworkonEvent.Arn
+      knowledgeBaseId: !GetAtt HealthKnowledgeBase.knowledgeBaseId
+      name: documents
+      dataSourceConfiguration:
+        type: S3
+        s3Configuration:
+          bucketArn: !GetAtt HealthDocumentBucket.Arn
+      vectorIngestionConfiguration:
+        chunkingConfiguration:
+          chunkingStrategy: FIXED_SIZE
+          fixedSizeChunkingConfiguration:
+            maxTokens: 500
+            overlapPercentage: 20
+    DependsOn:
+      - KBS3DataSourceDataSourceCRPolicy
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  KBS3DataSourceDataSourceCRPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - bedrock:CreateDataSource
+              - bedrock:DeleteDataSource
+              - bedrock:UpdateDataSource
+            Effect: Allow
+            Resource: !Join
+              - ''
+              - - 'arn:'
+                - !Ref AWS::Partition
+                - ':bedrock:'
+                - !Ref AWS::Region
+                - ':'
+                - !Ref AWS::AccountId
+                - ':knowledge-base/*'
+          - Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Effect: Allow
+            Resource:
+              - !GetAtt HealthDocumentBucket.Arn
+              - !Join
+                - ''
+                - - !GetAtt HealthDocumentBucket.Arn
+                  - /*
+        Version: '2012-10-17'
+      PolicyName: KBS3DataSourceDataSourceCRPolicy
+      Roles:
+        - !Ref BedrockCRProviderCRRole
+
+  KBQueryFunctionServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  KBQueryFunctionServiceRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - dynamodb:BatchWriteItem
+              - dynamodb:DeleteItem
+              - dynamodb:DescribeTable
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+            Effect: Allow
+            Resource:
+              - !GetAtt HealthTable.Arn
+              - !Ref AWS::NoValue
+          - Action:
+              - bedrock:InvokeModel
+              - bedrock:Retrieve
+              - bedrock:RetrieveAndGenerate
+            Effect: Allow
+            Resource:
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
+              - !Join
+                - ''
+                - - 'arn:aws:bedrock:'
+                  - !Ref AWS::Region
+                  - ':'
+                  - !Ref AWS::AccountId
+                  - ':knowledge-base/'
+                  - !GetAtt HealthKnowledgeBase.knowledgeBaseId
+        Version: '2012-10-17'
+      PolicyName: KBQueryFunctionServiceRoleDefaultPolicy
+      Roles:
+        - !Ref KBQueryFunctionServiceRole
+
+  KBQueryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 92ab89e0a51d893272bdb471a852aa46a7935725828b8ca6712fee11fa21965a.zip
+      Environment:
+        Variables:
+          KB_ID: !GetAtt HealthKnowledgeBase.knowledgeBaseId
+          KB_MODEL_ARN: arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
+          TABLE_NAME: !Ref HealthTable
+      Handler: app.handler
+      Role: !GetAtt KBQueryFunctionServiceRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+    DependsOn:
+      - KBQueryFunctionServiceRoleDefaultPolicy
+      - KBQueryFunctionServiceRole
+
+  IngestionJobServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  IngestionJobServiceRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: bedrock:StartIngestionJob
+            Effect: Allow
+            Resource: !GetAtt HealthKnowledgeBase.knowledgeBaseArn
+        Version: '2012-10-17'
+      PolicyName: IngestionJobServiceRoleDefaultPolicy
+      Roles:
+        - !Ref IngestionJobServiceRole
+
+  IngestionJob:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 92ab89e0a51d893272bdb471a852aa46a7935725828b8ca6712fee11fa21965a.zip
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !GetAtt HealthKnowledgeBase.knowledgeBaseId
+          DATA_SOURCE_ID: !GetAtt KBS3DataSource.dataSourceId
+      Handler: sync_bedrock.handler
+      Role: !GetAtt IngestionJobServiceRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+    DependsOn:
+      - IngestionJobServiceRoleDefaultPolicy
+      - IngestionJobServiceRole
+
+  BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: s3:PutBucketNotification
+            Effect: Allow
+            Resource: '*'
+        Version: '2012-10-17'
+      PolicyName: BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
+      Roles:
+        - !Ref BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
+  BucketNotificationsHandler050a0587b7544547bf325f094a3db:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: AWS CloudFormation handler for "Custom::S3BucketNotifications"
+        resources (@aws-cdk/aws-s3)
+      Code:
+        ZipFile: |
+          import boto3  # type: ignore
+          import json
+          import logging
+          import urllib.request
+          s3 = boto3.client("s3")
+          EVENTBRIDGE_CONFIGURATION = 'EventBridgeConfiguration'
+          CONFIGURATION_TYPES = ["TopicConfigurations", "QueueConfigurations", "LambdaFunctionConfigurations"]
+          def handler(event: dict, context):
+            response_status = "SUCCESS"
+            error_message = ""
+            try:
+              props = event["ResourceProperties"]
+              notification_configuration = props["NotificationConfiguration"]
+              managed = props.get('Managed', 'true').lower() == 'true'
+              stack_id = event['StackId']
+              old = event.get("OldResourceProperties", {}).get("NotificationConfiguration", {})
+              if managed:
+                config = handle_managed(event["RequestType"], notification_configuration)
+              else:
+                config = handle_unmanaged(props["BucketName"], stack_id, event["RequestType"], notification_configuration, old)
+              s3.put_bucket_notification_configuration(Bucket=props["BucketName"], NotificationConfiguration=config)
+            except Exception as e:
+              logging.exception("Failed to put bucket notification configuration")
+              response_status = "FAILED"
+              error_message = f"Error: {str(e)}. "
+            finally:
+              submit_response(event, context, response_status, error_message)
+          def handle_managed(request_type, notification_configuration):
+            if request_type == 'Delete':
+              return {}
+            return notification_configuration
+          def handle_unmanaged(bucket, stack_id, request_type, notification_configuration, old):
+            def with_id(n):
+              n['Id'] = f"{stack_id}-{hash(json.dumps(n, sort_keys=True))}"
+              return n
+            external_notifications = {}
+            existing_notifications = s3.get_bucket_notification_configuration(Bucket=bucket)
+            for t in CONFIGURATION_TYPES:
+              if request_type == 'Update':
+                  ids = [with_id(n) for n in old.get(t, [])]
+                  old_incoming_ids = [n['Id'] for n in ids]
+                  external_notifications[t] = [n for n in existing_notifications.get(t, []) if not n['Id'] in old_incoming_ids]
+              elif request_type == 'Create':
+                  external_notifications[t] = [n for n in existing_notifications.get(t, [])]
+            if EVENTBRIDGE_CONFIGURATION in existing_notifications:
+              external_notifications[EVENTBRIDGE_CONFIGURATION] = existing_notifications[EVENTBRIDGE_CONFIGURATION]
+            if request_type == 'Delete':
+              return external_notifications
+            notifications = {}
+            for t in CONFIGURATION_TYPES:
+              external = external_notifications.get(t, [])
+              incoming = [with_id(n) for n in notification_configuration.get(t, [])]
+              notifications[t] = external + incoming
+            if EVENTBRIDGE_CONFIGURATION in notification_configuration:
+              notifications[EVENTBRIDGE_CONFIGURATION] = notification_configuration[EVENTBRIDGE_CONFIGURATION]
+            elif EVENTBRIDGE_CONFIGURATION in external_notifications:
+              notifications[EVENTBRIDGE_CONFIGURATION] = external_notifications[EVENTBRIDGE_CONFIGURATION]
+            return notifications
+          def submit_response(event: dict, context, response_status: str, error_message: str):
+            response_body = json.dumps(
+              {
+                "Status": response_status,
+                "Reason": f"{error_message}See the details in CloudWatch Log Stream: {context.log_stream_name}",
+                "PhysicalResourceId": event.get("PhysicalResourceId") or event["LogicalResourceId"],
+                "StackId": event["StackId"],
+                "RequestId": event["RequestId"],
+                "LogicalResourceId": event["LogicalResourceId"],
+                "NoEcho": False,
+              }
+            ).encode("utf-8")
+            headers = {"content-type": "", "content-length": str(len(response_body))}
+            try:
+              req = urllib.request.Request(url=event["ResponseURL"], headers=headers, data=response_body, method="PUT")
+              with urllib.request.urlopen(req) as response:
+                print(response.read().decode("utf-8"))
+              print("Status code: " + response.reason)
+            except Exception as e:
+                print("send(..) failed executing request.urlopen(..): " + str(e))
+      Handler: index.handler
+      Role: !GetAtt BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role.Arn
+      Runtime: python3.11
+      Timeout: 300
+    DependsOn:
+      - BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
+      - BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
+  KBQueryApiGW:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: KBQueryApiGW
+
+  KBQueryApiGWDeployment5C1B9353c00f5a11d4453445a0c7538a2e959d4c:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: Automatically created by the RestApi construct
+      RestApiId: !Ref KBQueryApiGW
+    DependsOn:
+      - KBQueryApiGWqueryPOST
+      - KBQueryApiGWquery
+
+  KBQueryApiGWDeploymentStageprod:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref KBQueryApiGWDeployment5C1B9353c00f5a11d4453445a0c7538a2e959d4c
+      RestApiId: !Ref KBQueryApiGW
+      StageName: prod
+
+  KBQueryApiGWquery:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt KBQueryApiGW.RootResourceId
+      PathPart: query
+      RestApiId: !Ref KBQueryApiGW
+
+  KBQueryApiGWqueryPOSTApiPermissionHealthappStackKBQueryApiGWCF74A34CPOSTquery:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt KBQueryFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:'
+          - !Ref AWS::Partition
+          - ':execute-api:'
+          - !Ref AWS::Region
+          - ':'
+          - !Ref AWS::AccountId
+          - ':'
+          - !Ref KBQueryApiGW
+          - /
+          - !Ref KBQueryApiGWDeploymentStageprod
+          - /POST/query
+
+  KBQueryApiGWqueryPOSTApiPermissionTestHealthappStackKBQueryApiGWCF74A34CPOSTquery:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt KBQueryFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:'
+          - !Ref AWS::Partition
+          - ':execute-api:'
+          - !Ref AWS::Region
+          - ':'
+          - !Ref AWS::AccountId
+          - ':'
+          - !Ref KBQueryApiGW
+          - /test-invoke-stage/POST/query
+  KBQueryApiGWqueryPOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':apigateway:'
+            - !Ref AWS::Region
+            - ':lambda:path/2015-03-31/functions/'
+            - !GetAtt KBQueryFunction.Arn
+            - /invocations
+      ResourceId: !Ref KBQueryApiGWquery
+      RestApiId: !Ref KBQueryApiGW
+
+  LexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: MyLexBot
+      RoleArn: !GetAtt KBQueryFunctionServiceRole.Arn
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      BotLocales:
+        - LocaleId: en_US
+          Description: English locale
+          NluConfidenceThreshold: 0.4
+          Intents:
+            - Name: MedicIntent
+              SampleUtterances:
+                - Utterance: Hello
+                - Utterance: Hi
+                - Utterance: Greetings
+              Slots:
+                - Name: question
+                  SlotTypeName: AMAZON.FreeFormInput
+                  ValueElicitationSetting:
+                    SlotConstraint: Required
+                    PromptSpecification:
+                      MessageGroupsList:
+                        - Message:
+                            PlainTextMessage:
+                              Value: Please enter a prompt
+                      MaxRetries: 2
+              FulfillmentCodeHook:
+                Enabled: true
+            - Name: FallbackIntent
+              Description: Handles unmatched user input
+              ParentIntentSignature: AMAZON.FallbackIntent
+      TestBotAliasSettings:
+        BotAliasLocaleSettings:
+          - LocaleId: en_US
+            BotAliasLocaleSetting:
+              Enabled: true
+              CodeHookSpecification:
+                LambdaCodeHook:
+                  LambdaArn: !GetAtt KBQueryFunction.Arn
+                  CodeHookInterfaceVersion: '1.0'
