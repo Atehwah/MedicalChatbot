@@ -1,0 +1,152 @@
+Resources:
+  HealthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      TableName: medical-chat-table
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  AIQueryFunctionServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - lex.amazonaws.com
+            Action: sts:AssumeRole
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - !Join
+          - ''
+          - - 'arn:'
+            - !Ref AWS::Partition
+            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  AIQueryFunctionServiceRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - dynamodb:PutItem
+            Effect: Allow
+            Resource:
+              - !GetAtt HealthTable.Arn
+          - Action:
+              - bedrock:InvokeModel
+              - bedrock:Retrieve
+              - bedrock:RetrieveAndGenerate
+            Effect: Allow
+            Resource:
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
+        Version: '2012-10-17'
+      PolicyName: AIQueryFunctionServiceRoleDefaultPolicy
+      Roles:
+        - !Ref AIQueryFunctionServiceRole
+
+  AIQueryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AIQueryFunction
+      Code:
+        S3Bucket: !Sub cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}
+        S3Key: 92ab89e0a51d893272bdb471a852aa46a7935725828b8ca6712fee11fa21965a.zip
+      Environment:
+        Variables:
+          MODEL_ID: anthropic.claude-3-haiku-20240307-v1:0
+          MODEL_ARN: arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
+          TABLE_NAME: !Ref HealthTable
+      Handler: app.handler
+      Role: !GetAtt AIQueryFunctionServiceRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+    DependsOn:
+      - AIQueryFunctionServiceRoleDefaultPolicy
+      - AIQueryFunctionServiceRole
+
+  LexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: MedicalChatbot
+      RoleArn: !GetAtt AIQueryFunctionServiceRole.Arn
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      BotLocales:
+        - LocaleId: en_US
+          Description: English locale
+          NluConfidenceThreshold: 0.4
+          Intents:
+            - Name: MedicIntent
+              SampleUtterances:
+                - Utterance: Hello
+                - Utterance: Hi
+                - Utterance: Greetings
+              SlotPriorities:
+                - Priority: 1
+                  SlotName: question
+              Slots:
+                - Name: question
+                  SlotTypeName: AMAZON.FreeFormInput
+                  ValueElicitationSetting:
+                    SlotConstraint: Required
+                    PromptSpecification:
+                      MessageGroupsList:
+                        - Message:
+                            PlainTextMessage:
+                              Value: Please enter a prompt
+                      MaxRetries: 2
+              FulfillmentCodeHook:
+                Enabled: true
+            - Name: FallbackIntent
+              Description: Handles unmatched user input
+              ParentIntentSignature: AMAZON.FallbackIntent
+
+  MedicalBotVersionWithCFN:
+    DependsOn: LexBot
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !Ref LexBot
+      BotVersionLocaleSpecification:
+        - LocaleId: en_US
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+      Description: MedicalChatbot Version
+
+  FirstBotAliasWithCFN:
+    DependsOn: MedicalBotVersionWithCFN
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotId: !Ref LexBot
+      BotAliasName: MedicalChatboAliasVersion
+      BotAliasLocaleSettings:
+        - LocaleId: en_US
+          BotAliasLocaleSetting:
+            Enabled: true
+            CodeHookSpecification:
+              LambdaCodeHook:
+                CodeHookInterfaceVersion: '1.0'
+                LambdaArn: !GetAtt AIQueryFunction.Arn
+      SentimentAnalysisSettings:
+        DetectSentiment: true
+
+  LexInvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AIQueryFunction
+      Principal: lex.amazonaws.com
+      SourceArn: !Sub arn:aws:lex:${AWS::Region}:${AWS::AccountId}:bot-alias/${LexBot}/TSTALIASID
+    DependsOn: FirstBotAliasWithCFN

@@ -493,6 +493,14 @@ Resources:
     Type: AWS::S3::Bucket
     UpdateReplacePolicy: Delete
     DeletionPolicy: Delete
+    Properties:
+      BucketName: medical-documents-bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt IngestionJob.Arn
+          - Event: s3:ObjectRemoved:*
+            Function: !GetAtt IngestionJob.Arn
 
   HealthDocumentBucketNotifications:
     Type: Custom::S3BucketNotifications
@@ -646,6 +654,39 @@ Resources:
       - KBQueryFunctionServiceRoleDefaultPolicy
       - KBQueryFunctionServiceRole
 
+  IngestionJobPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestionJob
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt HealthDocumentBucket.Arn
+
+  IngestionJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Join
+                  - ''
+                  - - !GetAtt HealthDocumentBucket.Arn
+                    - /*
+
   IngestionJobServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -663,18 +704,18 @@ Resources:
             - !Ref AWS::Partition
             - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
 
-  IngestionJobServiceRoleDefaultPolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyDocument:
-        Statement:
-          - Action: bedrock:StartIngestionJob
-            Effect: Allow
-            Resource: !GetAtt HealthKnowledgeBase.knowledgeBaseArn
-        Version: '2012-10-17'
-      PolicyName: IngestionJobServiceRoleDefaultPolicy
-      Roles:
-        - !Ref IngestionJobServiceRole
+  # IngestionJobServiceRoleDefaultPolicy:
+  #   Type: AWS::IAM::Policy
+  #   Properties:
+  #     PolicyDocument:
+  #       Statement:
+  #         - Action: bedrock:StartIngestionJob
+  #           Effect: Allow
+  #           Resource: !GetAtt HealthKnowledgeBase.knowledgeBaseArn
+  #       Version: '2012-10-17'
+  #     PolicyName: IngestionJobServiceRoleDefaultPolicy
+  #     Roles:
+  #       - !Ref IngestionJobServiceRole
 
   IngestionJob:
     Type: AWS::Lambda::Function
@@ -687,134 +728,134 @@ Resources:
           KNOWLEDGE_BASE_ID: !GetAtt HealthKnowledgeBase.knowledgeBaseId
           DATA_SOURCE_ID: !GetAtt KBS3DataSource.dataSourceId
       Handler: sync_bedrock.handler
-      Role: !GetAtt IngestionJobServiceRole.Arn
+      Role: !GetAtt IngestionJobRole.Arn
       Runtime: python3.12
       Timeout: 900
     DependsOn:
-      - IngestionJobServiceRoleDefaultPolicy
-      - IngestionJobServiceRole
+      # - IngestionJobServiceRoleDefaultPolicy
+      - IngestionJobRole
 
-  BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-          - Action: sts:AssumeRole
-            Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-        Version: '2012-10-17'
-      ManagedPolicyArns:
-        - !Join
-          - ''
-          - - 'arn:'
-            - !Ref AWS::Partition
-            - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+  # BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Statement:
+  #         - Action: sts:AssumeRole
+  #           Effect: Allow
+  #           Principal:
+  #             Service: lambda.amazonaws.com
+  #       Version: '2012-10-17'
+  #     ManagedPolicyArns:
+  #       - !Join
+  #         - ''
+  #         - - 'arn:'
+  #           - !Ref AWS::Partition
+  #           - ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
 
-  BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyDocument:
-        Statement:
-          - Action: s3:PutBucketNotification
-            Effect: Allow
-            Resource: '*'
-        Version: '2012-10-17'
-      PolicyName: BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
-      Roles:
-        - !Ref BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
-  BucketNotificationsHandler050a0587b7544547bf325f094a3db:
-    Type: AWS::Lambda::Function
-    Properties:
-      Description: AWS CloudFormation handler for "Custom::S3BucketNotifications"
-        resources (@aws-cdk/aws-s3)
-      Code:
-        ZipFile: |
-          import boto3  # type: ignore
-          import json
-          import logging
-          import urllib.request
-          s3 = boto3.client("s3")
-          EVENTBRIDGE_CONFIGURATION = 'EventBridgeConfiguration'
-          CONFIGURATION_TYPES = ["TopicConfigurations", "QueueConfigurations", "LambdaFunctionConfigurations"]
-          def handler(event: dict, context):
-            response_status = "SUCCESS"
-            error_message = ""
-            try:
-              props = event["ResourceProperties"]
-              notification_configuration = props["NotificationConfiguration"]
-              managed = props.get('Managed', 'true').lower() == 'true'
-              stack_id = event['StackId']
-              old = event.get("OldResourceProperties", {}).get("NotificationConfiguration", {})
-              if managed:
-                config = handle_managed(event["RequestType"], notification_configuration)
-              else:
-                config = handle_unmanaged(props["BucketName"], stack_id, event["RequestType"], notification_configuration, old)
-              s3.put_bucket_notification_configuration(Bucket=props["BucketName"], NotificationConfiguration=config)
-            except Exception as e:
-              logging.exception("Failed to put bucket notification configuration")
-              response_status = "FAILED"
-              error_message = f"Error: {str(e)}. "
-            finally:
-              submit_response(event, context, response_status, error_message)
-          def handle_managed(request_type, notification_configuration):
-            if request_type == 'Delete':
-              return {}
-            return notification_configuration
-          def handle_unmanaged(bucket, stack_id, request_type, notification_configuration, old):
-            def with_id(n):
-              n['Id'] = f"{stack_id}-{hash(json.dumps(n, sort_keys=True))}"
-              return n
-            external_notifications = {}
-            existing_notifications = s3.get_bucket_notification_configuration(Bucket=bucket)
-            for t in CONFIGURATION_TYPES:
-              if request_type == 'Update':
-                  ids = [with_id(n) for n in old.get(t, [])]
-                  old_incoming_ids = [n['Id'] for n in ids]
-                  external_notifications[t] = [n for n in existing_notifications.get(t, []) if not n['Id'] in old_incoming_ids]
-              elif request_type == 'Create':
-                  external_notifications[t] = [n for n in existing_notifications.get(t, [])]
-            if EVENTBRIDGE_CONFIGURATION in existing_notifications:
-              external_notifications[EVENTBRIDGE_CONFIGURATION] = existing_notifications[EVENTBRIDGE_CONFIGURATION]
-            if request_type == 'Delete':
-              return external_notifications
-            notifications = {}
-            for t in CONFIGURATION_TYPES:
-              external = external_notifications.get(t, [])
-              incoming = [with_id(n) for n in notification_configuration.get(t, [])]
-              notifications[t] = external + incoming
-            if EVENTBRIDGE_CONFIGURATION in notification_configuration:
-              notifications[EVENTBRIDGE_CONFIGURATION] = notification_configuration[EVENTBRIDGE_CONFIGURATION]
-            elif EVENTBRIDGE_CONFIGURATION in external_notifications:
-              notifications[EVENTBRIDGE_CONFIGURATION] = external_notifications[EVENTBRIDGE_CONFIGURATION]
-            return notifications
-          def submit_response(event: dict, context, response_status: str, error_message: str):
-            response_body = json.dumps(
-              {
-                "Status": response_status,
-                "Reason": f"{error_message}See the details in CloudWatch Log Stream: {context.log_stream_name}",
-                "PhysicalResourceId": event.get("PhysicalResourceId") or event["LogicalResourceId"],
-                "StackId": event["StackId"],
-                "RequestId": event["RequestId"],
-                "LogicalResourceId": event["LogicalResourceId"],
-                "NoEcho": False,
-              }
-            ).encode("utf-8")
-            headers = {"content-type": "", "content-length": str(len(response_body))}
-            try:
-              req = urllib.request.Request(url=event["ResponseURL"], headers=headers, data=response_body, method="PUT")
-              with urllib.request.urlopen(req) as response:
-                print(response.read().decode("utf-8"))
-              print("Status code: " + response.reason)
-            except Exception as e:
-                print("send(..) failed executing request.urlopen(..): " + str(e))
-      Handler: index.handler
-      Role: !GetAtt BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role.Arn
-      Runtime: python3.11
-      Timeout: 300
-    DependsOn:
-      - BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
-      - BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
+  # BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy:
+  #   Type: AWS::IAM::Policy
+  #   Properties:
+  #     PolicyDocument:
+  #       Statement:
+  #         - Action: s3:PutBucketNotification
+  #           Effect: Allow
+  #           Resource: '*'
+  #       Version: '2012-10-17'
+  #     PolicyName: BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
+  #     Roles:
+  #       - !Ref BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
+  # BucketNotificationsHandler050a0587b7544547bf325f094a3db:
+  #   Type: AWS::Lambda::Function
+  #   Properties:
+  #     Description: AWS CloudFormation handler for "Custom::S3BucketNotifications"
+  #       resources (@aws-cdk/aws-s3)
+  #     Code:
+  #       ZipFile: |
+  #         import boto3  # type: ignore
+  #         import json
+  #         import logging
+  #         import urllib.request
+  #         s3 = boto3.client("s3")
+  #         EVENTBRIDGE_CONFIGURATION = 'EventBridgeConfiguration'
+  #         CONFIGURATION_TYPES = ["TopicConfigurations", "QueueConfigurations", "LambdaFunctionConfigurations"]
+  #         def handler(event: dict, context):
+  #           response_status = "SUCCESS"
+  #           error_message = ""
+  #           try:
+  #             props = event["ResourceProperties"]
+  #             notification_configuration = props["NotificationConfiguration"]
+  #             managed = props.get('Managed', 'true').lower() == 'true'
+  #             stack_id = event['StackId']
+  #             old = event.get("OldResourceProperties", {}).get("NotificationConfiguration", {})
+  #             if managed:
+  #               config = handle_managed(event["RequestType"], notification_configuration)
+  #             else:
+  #               config = handle_unmanaged(props["BucketName"], stack_id, event["RequestType"], notification_configuration, old)
+  #             s3.put_bucket_notification_configuration(Bucket=props["BucketName"], NotificationConfiguration=config)
+  #           except Exception as e:
+  #             logging.exception("Failed to put bucket notification configuration")
+  #             response_status = "FAILED"
+  #             error_message = f"Error: {str(e)}. "
+  #           finally:
+  #             submit_response(event, context, response_status, error_message)
+  #         def handle_managed(request_type, notification_configuration):
+  #           if request_type == 'Delete':
+  #             return {}
+  #           return notification_configuration
+  #         def handle_unmanaged(bucket, stack_id, request_type, notification_configuration, old):
+  #           def with_id(n):
+  #             n['Id'] = f"{stack_id}-{hash(json.dumps(n, sort_keys=True))}"
+  #             return n
+  #           external_notifications = {}
+  #           existing_notifications = s3.get_bucket_notification_configuration(Bucket=bucket)
+  #           for t in CONFIGURATION_TYPES:
+  #             if request_type == 'Update':
+  #                 ids = [with_id(n) for n in old.get(t, [])]
+  #                 old_incoming_ids = [n['Id'] for n in ids]
+  #                 external_notifications[t] = [n for n in existing_notifications.get(t, []) if not n['Id'] in old_incoming_ids]
+  #             elif request_type == 'Create':
+  #                 external_notifications[t] = [n for n in existing_notifications.get(t, [])]
+  #           if EVENTBRIDGE_CONFIGURATION in existing_notifications:
+  #             external_notifications[EVENTBRIDGE_CONFIGURATION] = existing_notifications[EVENTBRIDGE_CONFIGURATION]
+  #           if request_type == 'Delete':
+  #             return external_notifications
+  #           notifications = {}
+  #           for t in CONFIGURATION_TYPES:
+  #             external = external_notifications.get(t, [])
+  #             incoming = [with_id(n) for n in notification_configuration.get(t, [])]
+  #             notifications[t] = external + incoming
+  #           if EVENTBRIDGE_CONFIGURATION in notification_configuration:
+  #             notifications[EVENTBRIDGE_CONFIGURATION] = notification_configuration[EVENTBRIDGE_CONFIGURATION]
+  #           elif EVENTBRIDGE_CONFIGURATION in external_notifications:
+  #             notifications[EVENTBRIDGE_CONFIGURATION] = external_notifications[EVENTBRIDGE_CONFIGURATION]
+  #           return notifications
+  #         def submit_response(event: dict, context, response_status: str, error_message: str):
+  #           response_body = json.dumps(
+  #             {
+  #               "Status": response_status,
+  #               "Reason": f"{error_message}See the details in CloudWatch Log Stream: {context.log_stream_name}",
+  #               "PhysicalResourceId": event.get("PhysicalResourceId") or event["LogicalResourceId"],
+  #               "StackId": event["StackId"],
+  #               "RequestId": event["RequestId"],
+  #               "LogicalResourceId": event["LogicalResourceId"],
+  #               "NoEcho": False,
+  #             }
+  #           ).encode("utf-8")
+  #           headers = {"content-type": "", "content-length": str(len(response_body))}
+  #           try:
+  #             req = urllib.request.Request(url=event["ResponseURL"], headers=headers, data=response_body, method="PUT")
+  #             with urllib.request.urlopen(req) as response:
+  #               print(response.read().decode("utf-8"))
+  #             print("Status code: " + response.reason)
+  #           except Exception as e:
+  #               print("send(..) failed executing request.urlopen(..): " + str(e))
+  #     Handler: index.handler
+  #     Role: !GetAtt BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role.Arn
+  #     Runtime: python3.11
+  #     Timeout: 300
+  #   DependsOn:
+  #     - BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy
+  #     - BucketNotificationsHandler050a0587b7544547bf325f094a3db834Role
   KBQueryApiGW:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -900,10 +941,36 @@ Resources:
       ResourceId: !Ref KBQueryApiGWquery
       RestApiId: !Ref KBQueryApiGW
 
+  BotRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lexv2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LexRuntimeRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - polly:SynthesizeSpeech
+                  - comprehend:DetectSentiment
+                Resource: '*'
+
   LexBot:
+    DependsOn: BotRuntimeRole
     Type: AWS::Lex::Bot
     Properties:
-      Name: MyLexBot
+      Name: MedicalChatbot
+      # RoleArn: !GetAtt BotRuntimeRole.Arn
       RoleArn: !GetAtt KBQueryFunctionServiceRole.Arn
       DataPrivacy:
         ChildDirected: false
@@ -918,6 +985,9 @@ Resources:
                 - Utterance: Hello
                 - Utterance: Hi
                 - Utterance: Greetings
+              SlotPriorities:
+                - Priority: 1
+                  SlotName: question
               Slots:
                 - Name: question
                   SlotTypeName: AMAZON.FreeFormInput
@@ -934,12 +1004,114 @@ Resources:
             - Name: FallbackIntent
               Description: Handles unmatched user input
               ParentIntentSignature: AMAZON.FallbackIntent
-      TestBotAliasSettings:
-        BotAliasLocaleSettings:
-          - LocaleId: en_US
-            BotAliasLocaleSetting:
-              Enabled: true
-              CodeHookSpecification:
-                LambdaCodeHook:
-                  LambdaArn: !GetAtt KBQueryFunction.Arn
-                  CodeHookInterfaceVersion: '1.0'
+
+  MedicalBotVersionWithCFN:
+    DependsOn: LexBot
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !Ref LexBot
+      BotVersionLocaleSpecification:
+        - LocaleId: en_US
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+      Description: BookTrip Version
+  FirstBotAliasWithCFN:
+    DependsOn: MedicalBotVersionWithCFN
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotId: !Ref LexBot
+      BotAliasName: MedicalChatboAliasVersion
+      BotAliasLocaleSettings:
+        - LocaleId: en_US
+          BotAliasLocaleSetting:
+            Enabled: false
+            CodeHookSpecification:
+              LambdaCodeHook:
+                CodeHookInterfaceVersion: '1.0'
+                LambdaArn: !GetAtt KBQueryFunction.Arn
+      SentimentAnalysisSettings:
+        DetectSentiment: true
+  # KBQueryApiGW:
+  #   Type: AWS::ApiGateway::RestApi
+  #   Properties:
+  #     Name: KBQueryApiGW
+
+  # KBQueryApiGWDeployment5C1B9353c00f5a11d4453445a0c7538a2e959d4c:
+  #   Type: AWS::ApiGateway::Deployment
+  #   Properties:
+  #     Description: Automatically created by the RestApi construct
+  #     RestApiId: !Ref KBQueryApiGW
+  #   DependsOn:
+  #     - KBQueryApiGWqueryPOST
+  #     - KBQueryApiGWquery
+
+  # KBQueryApiGWDeploymentStageprod:
+  #   Type: AWS::ApiGateway::Stage
+  #   Properties:
+  #     DeploymentId: !Ref KBQueryApiGWDeployment5C1B9353c00f5a11d4453445a0c7538a2e959d4c
+  #     RestApiId: !Ref KBQueryApiGW
+  #     StageName: prod
+
+  # KBQueryApiGWquery:
+  #   Type: AWS::ApiGateway::Resource
+  #   Properties:
+  #     ParentId: !GetAtt KBQueryApiGW.RootResourceId
+  #     PathPart: query
+  #     RestApiId: !Ref KBQueryApiGW
+
+  # KBQueryApiGWqueryPOSTApiPermissionHealthappStackKBQueryApiGWCF74A34CPOSTquery:
+  #   Type: AWS::Lambda::Permission
+  #   Properties:
+  #     Action: lambda:InvokeFunction
+  #     FunctionName: !GetAtt KBQueryFunction.Arn
+  #     Principal: apigateway.amazonaws.com
+  #     SourceArn: !Join
+  #       - ''
+  #       - - 'arn:'
+  #         - !Ref AWS::Partition
+  #         - ':execute-api:'
+  #         - !Ref AWS::Region
+  #         - ':'
+  #         - !Ref AWS::AccountId
+  #         - ':'
+  #         - !Ref KBQueryApiGW
+  #         - /
+  #         - !Ref KBQueryApiGWDeploymentStageprod
+  #         - /POST/query
+
+  # KBQueryApiGWqueryPOSTApiPermissionTestHealthappStackKBQueryApiGWCF74A34CPOSTquery:
+  #   Type: AWS::Lambda::Permission
+  #   Properties:
+  #     Action: lambda:InvokeFunction
+  #     FunctionName: !GetAtt KBQueryFunction.Arn
+  #     Principal: apigateway.amazonaws.com
+  #     SourceArn: !Join
+  #       - ''
+  #       - - 'arn:'
+  #         - !Ref AWS::Partition
+  #         - ':execute-api:'
+  #         - !Ref AWS::Region
+  #         - ':'
+  #         - !Ref AWS::AccountId
+  #         - ':'
+  #         - !Ref KBQueryApiGW
+  #         - /test-invoke-stage/POST/query
+  # KBQueryApiGWqueryPOST:
+  #   Type: AWS::ApiGateway::Method
+  #   Properties:
+  #     AuthorizationType: NONE
+  #     HttpMethod: POST
+  #     Integration:
+  #       IntegrationHttpMethod: POST
+  #       Type: AWS_PROXY
+  #       Uri: !Join
+  #         - ''
+  #         - - 'arn:'
+  #           - !Ref AWS::Partition
+  #           - ':apigateway:'
+  #           - !Ref AWS::Region
+  #           - ':lambda:path/2015-03-31/functions/'
+  #           - !GetAtt KBQueryFunction.Arn
+  #           - /invocations
+  #     ResourceId: !Ref KBQueryApiGWquery
+  #     RestApiId: !Ref KBQueryApiGW
