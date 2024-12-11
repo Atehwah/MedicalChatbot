@@ -9,3 +9,5 @@ __pycache__
 .cdk.staging
 cdk.out
 venv
+temp..yml
+knowledge_base_template..yml
