@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A sample template for Knowledge base with Amazon Opensearch Serverless vector database.
+Parameters:
+  KnowledgeBaseName:
+    Type: String
+    Description: The name of the knowledge base.
+  KnowledgeBaseDescription:
+    Type: String
+    Description: The description of the knowledge base.
+  DataSourceName:
+    Type: String
+    Description: The name of the data source.
+  DataSourceDescription:
+    Type: String
+    Description: The description of the data source.
+Resources:
+
+  HealthDocumentBucket:
+    Type: AWS::S3::Bucket
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  MedicalChatKnowledgebaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+          - Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Join
+                  - ''
+                  - - 'arn:'
+                    - !Ref AWS::Partition
+                    - ':bedrock:'
+                    - !Ref AWS::Region
+                    - ':'
+                    - !Ref AWS::AccountId
+                    - ':knowledge-base/*'
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+        Version: '2012-10-17'
+
+  HealthKnowledgeBaseKBVectorsEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: encryptionpolicyhealtorsbeaafaae
+      Policy: '{"Rules":[{"ResourceType":"collection","Resource":["collection/vectorstorehealthectorsbeaafaae"]}],"AWSOwnedKey":true}'
+      Type: encryption
+
+  HealthKnowledgeBaseKBVectorsNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: networkpolicyhealtctorsbeaafaae
+      Policy: '[{"Rules":[{"ResourceType":"collection","Resource":["collection/vectorstorehealthectorsbeaafaae"]},{"ResourceType":"dashboard","Resource":["collection/vectorstorehealthectorsbeaafaae"]}],"AllowFromPublic":true}]'
+      Type: network
+
+  OssCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: vectorstorehealthectorsbeaafaae
+      Type: VECTORSEARCH
+    DependsOn:
+      - HealthKnowledgeBaseKBVectorsEncryptionPolicy
+      - HealthKnowledgeBaseKBVectorsNetworkPolicy
+
+  # OssCollection:
+  #   Type: 'AWS::OpenSearchServerless::Collection'
+  #   Properties:
+  #     Name: medical-chat
+  #     Type: VECTORSEARCH
+  #     Description: Search collection
+  #   DependsOn: EncryptionPolicy
+  # EncryptionPolicy:
+  #   Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+  #   Properties:
+  #     Name: test-encryption-policy
+  #     Type: encryption
+  #     Description: Encryption policy for test collection
+  #     Policy: >-
+  #       {"Rules":[{"ResourceType":"collection","Resource":["collection/test-collection"]}],"AWSOwnedKey":true}
+
+  KnowledgeBaseWithAoss:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Ref KnowledgeBaseName
+      Description: !Ref KnowledgeBaseDescription
+      RoleArn: !GetAtt MedicalChatKnowledgebaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: "VECTOR"
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v1"
+      StorageConfiguration:
+        Type: "OPENSEARCH_SERVERLESS"
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt OssCollection.Arn # "arn:aws:aoss:us-west-2:059609450404:collection/abcdefghij1234567890"
+          VectorIndexName: "cfn-test-index"
+          FieldMapping:
+            VectorField: "cfn-test-vector-field"
+            TextField: "text"
+            MetadataField: "metadata"
+  SampleDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      KnowledgeBaseId: !Ref KnowledgeBaseWithAoss
+      Name: !Ref DataSourceName
+      Description: !Ref DataSourceDescription
+      DataSourceConfiguration:
+        Type: "S3"
+        S3Configuration:
+          BucketArn: !GetAtt HealthDocumentBucket.Arn
+          # InclusionPrefixes: ["aws-overview.pdf"]
